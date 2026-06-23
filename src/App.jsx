@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart,
   Bar,
@@ -26,7 +26,8 @@ import {
   LogOut,
   Mail,
   PieChart as PieIcon,
-  PlusCircle,
+  Play,
+  Timer,
   Trash2,
   TrendingUp,
   X,
@@ -44,13 +45,18 @@ import {
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#06b6d4']
 
+const formatTimer = (totalSeconds) => {
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0')
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0')
+  const seconds = String(totalSeconds % 60).padStart(2, '0')
+
+  return `${hours}:${minutes}:${seconds}`
+}
+
 export default function App() {
   const [categories, setCategories] = useState([])
   const [sessions, setSessions] = useState([])
   const [newCategoryName, setNewCategoryName] = useState('')
-  const [category, setCategory] = useState('')
-  const [duration, setDuration] = useState('')
-  const [comment, setComment] = useState('')
   const [selectedSubject, setSelectedSubject] = useState(null)
   const [isContributionOpen, setIsContributionOpen] = useState(false)
   const [timeRange, setTimeRange] = useState('week')
@@ -61,6 +67,14 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  const [isLearningActive, setIsLearningActive] = useState(false)
+  const [startedAt, setStartedAt] = useState(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [isTimerModalOpen, setIsTimerModalOpen] = useState(false)
+  const [timerModalStep, setTimerModalStep] = useState('confirmFinish')
+  const [timerSubject, setTimerSubject] = useState('')
+  const [timerComment, setTimerComment] = useState('')
+  const intervalRef = useRef(null)
 
   const userId = currentUser?.id ?? null
   const storageMode = isSupabaseConfigured && currentUser ? 'supabase' : 'local'
@@ -142,14 +156,40 @@ export default function App() {
   }, [authLoading, userId])
 
   useEffect(() => {
-    if (!categories.includes(category)) {
-      setCategory(categories[0] || '')
+    if (timerSubject && !categories.includes(timerSubject)) {
+      setTimerSubject(categories[0] || '')
     }
 
     if (selectedSubject && !categories.includes(selectedSubject)) {
       setSelectedSubject(null)
     }
-  }, [categories, category, selectedSubject])
+  }, [categories, selectedSubject, timerSubject])
+
+  useEffect(() => {
+    if (!isLearningActive || !startedAt) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+      return
+    }
+
+    const updateElapsed = () => {
+      const startTimestamp = new Date(startedAt).getTime()
+      const nextElapsed = Math.max(0, Math.floor((Date.now() - startTimestamp) / 1000))
+      setElapsedSeconds(nextElapsed)
+    }
+
+    updateElapsed()
+    intervalRef.current = window.setInterval(updateElapsed, 1000)
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [isLearningActive, startedAt])
 
   const totalHours = useMemo(
     () => (sessions.reduce((accumulator, session) => accumulator + session.duration, 0) / 60).toFixed(1),
@@ -246,6 +286,41 @@ export default function App() {
     return index !== -1 ? COLORS[index % COLORS.length] : COLORS[COLORS.length - 1]
   }
 
+  const resetTimerState = () => {
+    setIsLearningActive(false)
+    setStartedAt(null)
+    setElapsedSeconds(0)
+    setIsTimerModalOpen(false)
+    setTimerModalStep('confirmFinish')
+    setTimerSubject('')
+    setTimerComment('')
+  }
+
+  const handleStartLearning = () => {
+    if (isLearningActive) {
+      return
+    }
+
+    const availableCategory = categories[0] || ''
+    setIsLearningActive(true)
+    setStartedAt(new Date().toISOString())
+    setElapsedSeconds(0)
+    setTimerSubject(availableCategory)
+    setTimerComment('')
+    setTimerModalStep('confirmFinish')
+    setAuthMessage('Сессия обучения запущена. Таймер считает время автоматически.')
+    setErrorMessage('')
+  }
+
+  const handleOpenTimerModal = () => {
+    if (!isLearningActive) {
+      return
+    }
+
+    setTimerModalStep('confirmFinish')
+    setIsTimerModalOpen(true)
+  }
+
   const handleAddCategory = async (event) => {
     event.preventDefault()
     const trimmed = newCategoryName.trim()
@@ -262,8 +337,8 @@ export default function App() {
       setCategories((currentCategories) => [...currentCategories, createdCategory])
       setNewCategoryName('')
 
-      if (categories.length === 0) {
-        setCategory(createdCategory)
+      if (!timerSubject) {
+        setTimerSubject(createdCategory)
       }
     } catch (error) {
       console.error('Ошибка добавления категории.', error)
@@ -295,36 +370,6 @@ export default function App() {
     }
   }
 
-  const handleAddSession = async (event) => {
-    event.preventDefault()
-
-    if (!duration || Number(duration) <= 0 || !category) {
-      return
-    }
-
-    const nextSession = {
-      date: new Date().toISOString().split('T')[0],
-      category,
-      duration: Number.parseInt(duration, 10),
-      comment: comment.trim() || 'Без описания',
-    }
-
-    setIsSaving(true)
-    setErrorMessage('')
-
-    try {
-      const createdSession = await createSession(nextSession, { userId })
-      setSessions((currentSessions) => [createdSession, ...currentSessions])
-      setDuration('')
-      setComment('')
-    } catch (error) {
-      console.error('Ошибка добавления занятия.', error)
-      setErrorMessage(error.message || 'Не удалось сохранить занятие.')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
   const handleDeleteSession = async (sessionId) => {
     setIsSaving(true)
     setErrorMessage('')
@@ -335,6 +380,48 @@ export default function App() {
     } catch (error) {
       console.error('Ошибка удаления занятия.', error)
       setErrorMessage(error.message || 'Не удалось удалить занятие.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleConfirmFinish = () => {
+    setTimerModalStep('saveSession')
+    setTimerSubject((currentValue) => currentValue || categories[0] || '')
+  }
+
+  const handleSaveTimedSession = async () => {
+    const durationMinutes = Math.floor(elapsedSeconds / 60)
+
+    if (durationMinutes <= 0) {
+      setErrorMessage('Сессия меньше минуты — нечего сохранять.')
+      return
+    }
+
+    if (!timerSubject) {
+      setErrorMessage('Выбери предмет перед сохранением.')
+      return
+    }
+
+    const nextSession = {
+      date: new Date().toISOString().split('T')[0],
+      category: timerSubject,
+      duration: durationMinutes,
+      comment: timerComment.trim() || 'Без описания',
+    }
+
+    setIsSaving(true)
+    setErrorMessage('')
+    setAuthMessage('')
+
+    try {
+      const createdSession = await createSession(nextSession, { userId })
+      setSessions((currentSessions) => [createdSession, ...currentSessions])
+      resetTimerState()
+      setAuthMessage(`Сессия сохранена: ${durationMinutes} мин. по предмету "${nextSession.category}".`)
+    } catch (error) {
+      console.error('Ошибка сохранения сессии таймера.', error)
+      setErrorMessage(error.message || 'Не удалось сохранить завершённую сессию.')
     } finally {
       setIsSaving(false)
     }
@@ -383,8 +470,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-6 flex flex-col gap-6">
       <header className="flex flex-col gap-4 bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div>
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+          <div className="flex-1 min-w-0">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
               My Learning Tracker
             </h1>
@@ -393,13 +480,36 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+          <div className="xl:flex-1 xl:flex xl:justify-center">
+            <button
+              type="button"
+              onClick={handleStartLearning}
+              disabled={isLearningActive || categories.length === 0 || isSaving}
+              className="w-full xl:w-auto inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 bg-indigo-600 text-white font-semibold shadow-lg shadow-indigo-900/30 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-400 disabled:shadow-none transition"
+            >
+              <Play size={18} />
+              {isLearningActive ? 'Обучение уже запущено' : 'Начать обучение'}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-3 xl:justify-end">
             <button
               onClick={() => setIsContributionOpen(true)}
-              className="flex items-center justify-center gap-2 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-4 py-2 rounded-xl hover:bg-indigo-600/30 transition"
+              className="flex items-center gap-2 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-4 py-2 rounded-xl hover:bg-indigo-600/30 transition"
             >
               <PieIcon size={18} /> Вклад занятий
             </button>
+
+            {isLearningActive && (
+              <button
+                type="button"
+                onClick={handleOpenTimerModal}
+                className="flex items-center gap-2 bg-emerald-500/10 text-emerald-300 border border-emerald-400/30 px-4 py-2 rounded-xl hover:bg-emerald-500/20 transition"
+              >
+                <Timer size={18} className="text-emerald-400" />
+                <span className="font-semibold tabular-nums">{formatTimer(elapsedSeconds)}</span>
+              </button>
+            )}
 
             <div className="flex items-center gap-3 bg-slate-900/60 px-4 py-2 rounded-xl border border-slate-700">
               <Flame className="text-orange-500 fill-orange-500" size={20} />
@@ -532,7 +642,7 @@ export default function App() {
                 disabled={isSaving}
                 className="bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white p-2 rounded-xl border border-indigo-500/30 disabled:opacity-60 transition"
               >
-                <PlusCircle size={18} />
+                <BookOpen size={18} />
               </button>
             </form>
           </div>
@@ -553,55 +663,25 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
-                <h3 className="text-base font-semibold mb-4 flex items-center gap-2"><PlusCircle className="text-indigo-400" size={18} /> Добавить</h3>
-                <form onSubmit={handleAddSession} className="space-y-4">
-                  <select
-                    value={category}
-                    onChange={(event) => setCategory(event.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 outline-none"
-                    disabled={categories.length === 0 || isSaving}
-                  >
-                    {categories.length === 0 && <option value="">Создайте предмет слева</option>}
-                    {categories.map((categoryName) => <option key={categoryName} value={categoryName}>{categoryName}</option>)}
-                  </select>
-                  <input
-                    type="number"
-                    placeholder="Минуты (напр. 45)"
-                    value={duration}
-                    onChange={(event) => setDuration(event.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 outline-none"
-                  />
-                  <textarea
-                    rows="2"
-                    placeholder="Что сделано..."
-                    value={comment}
-                    onChange={(event) => setComment(event.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 outline-none resize-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={categories.length === 0 || isSaving}
-                    className="w-full bg-indigo-600 disabled:bg-slate-700 hover:bg-indigo-500 text-white font-medium py-2 rounded-xl text-sm transition"
-                  >
-                    {isSaving ? 'Сохраняем...' : 'Сохранить'}
-                  </button>
-                </form>
+            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-semibold text-slate-300">Активность (Пн-Вс)</h3>
+                {isLearningActive && (
+                  <div className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300">
+                    <Timer size={16} />
+                    <span className="tabular-nums">{formatTimer(elapsedSeconds)}</span>
+                  </div>
+                )}
               </div>
-
-              <div className="lg:col-span-2 bg-slate-800 p-5 rounded-2xl border border-slate-700">
-                <h3 className="text-base font-semibold mb-4 text-slate-300">Активность (Пн-Вс)</h3>
-                <div className="h-56 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={barChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
-                      <Tooltip cursor={{ fill: '#334155' }} contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', borderRadius: '8px' }} />
-                      <Bar dataKey="Минуты" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={30} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={barChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                    <Tooltip cursor={{ fill: '#334155' }} contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', borderRadius: '8px' }} />
+                    <Bar dataKey="Минуты" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={30} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </div>
 
@@ -704,6 +784,96 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
             ) : <div className="py-12 text-center text-slate-500">Нет данных для построения диаграммы.</div>}
+          </div>
+        </div>
+      )}
+
+      {isTimerModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Timer className="text-emerald-400" size={20} />
+                {timerModalStep === 'confirmFinish' ? 'Активная сессия' : 'Сохранение сессии'}
+              </h2>
+              <button
+                onClick={() => setIsTimerModalOpen(false)}
+                className="text-slate-400 hover:text-white bg-slate-700/50 p-1.5 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {timerModalStep === 'confirmFinish' ? (
+              <div className="space-y-5">
+                <div className="bg-slate-900/60 border border-slate-700 rounded-2xl p-4">
+                  <div className="text-sm text-slate-400 mb-2">Текущее время обучения</div>
+                  <div className="text-3xl font-bold text-emerald-300 tabular-nums">{formatTimer(elapsedSeconds)}</div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleConfirmFinish}
+                    className="rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-3 transition"
+                  >
+                    Завершить обучение
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsTimerModalOpen(false)}
+                    className="rounded-xl border border-slate-600 bg-slate-900/60 hover:bg-slate-700 text-slate-200 font-medium px-4 py-3 transition"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-slate-900/60 border border-slate-700 rounded-2xl p-4">
+                  <div className="text-sm text-slate-400 mb-2">Итоговое время обучения</div>
+                  <div className="text-3xl font-bold text-indigo-300 tabular-nums">{formatTimer(elapsedSeconds)}</div>
+                  <div className="text-xs text-slate-500 mt-2">
+                    К сохранению пойдет {Math.floor(elapsedSeconds / 60)} мин.
+                  </div>
+                </div>
+
+                <select
+                  value={timerSubject}
+                  onChange={(event) => setTimerSubject(event.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 outline-none"
+                  disabled={categories.length === 0 || isSaving}
+                >
+                  {categories.length === 0 && <option value="">Создайте предмет слева</option>}
+                  {categories.map((categoryName) => <option key={categoryName} value={categoryName}>{categoryName}</option>)}
+                </select>
+
+                <textarea
+                  rows="3"
+                  placeholder="Что сделал?"
+                  value={timerComment}
+                  onChange={(event) => setTimerComment(event.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 outline-none resize-none"
+                />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveTimedSession}
+                    disabled={isSaving || categories.length === 0}
+                    className="rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white font-medium px-4 py-3 transition"
+                  >
+                    {isSaving ? 'Сохраняем...' : 'Сохранить'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTimerModalStep('confirmFinish')}
+                    className="rounded-xl border border-slate-600 bg-slate-900/60 hover:bg-slate-700 text-slate-200 font-medium px-4 py-3 transition"
+                  >
+                    Назад
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
