@@ -12,6 +12,19 @@ export const getCurrentUser = async () => {
   }
 
   const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession()
+
+  if (sessionError) {
+    throw sessionError
+  }
+
+  if (session?.user) {
+    return session.user
+  }
+
+  const {
     data: { user },
     error,
   } = await supabase.auth.getUser()
@@ -56,7 +69,12 @@ export const subscribeToAuthChanges = (callback) => {
 
   const {
     data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => {
+  } = supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') {
+      callback(null)
+      return
+    }
+
     callback(session?.user ?? null)
   })
 
