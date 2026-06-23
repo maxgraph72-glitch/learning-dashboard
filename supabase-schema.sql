@@ -37,6 +37,11 @@ execute function public.set_dashboard_items_updated_at();
 
 alter table public.dashboard_items enable row level security;
 
+drop policy if exists "Users can read own dashboard items" on public.dashboard_items;
+drop policy if exists "Users can insert own dashboard items" on public.dashboard_items;
+drop policy if exists "Users can update own dashboard items" on public.dashboard_items;
+drop policy if exists "Users can delete own dashboard items" on public.dashboard_items;
+
 create policy "Users can read own dashboard items"
 on public.dashboard_items
 for select

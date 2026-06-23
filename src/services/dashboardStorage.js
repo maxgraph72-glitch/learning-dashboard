@@ -48,6 +48,32 @@ const writeLocalSessions = (sessions) => {
 
 const canUseRemoteStorage = (userId) => Boolean(isSupabaseConfigured && supabase && userId)
 
+const logAndThrow = (message, error) => {
+  console.error(message, error)
+  throw error
+}
+
+const getRemoteUserId = async (candidateUserId) => {
+  if (!isSupabaseConfigured || !supabase) {
+    return null
+  }
+
+  if (candidateUserId) {
+    return candidateUserId
+  }
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser()
+
+  if (error) {
+    logAndThrow('Не удалось получить пользователя Supabase для операции с хранилищем.', error)
+  }
+
+  return user?.id ?? null
+}
+
 const mapCategoryToLocalItem = (categoryName) => ({
   id: `category:${categoryName}`,
   user_id: null,
@@ -143,25 +169,29 @@ const updateLocalItemState = (id, updates) => {
 }
 
 export const getItems = async ({ userId } = {}) => {
-  if (!canUseRemoteStorage(userId)) {
+  const remoteUserId = await getRemoteUserId(userId)
+
+  if (!canUseRemoteStorage(remoteUserId)) {
     return getLocalItems()
   }
 
   const { data, error } = await supabase
     .from('dashboard_items')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', remoteUserId)
     .order('created_at', { ascending: false })
 
   if (error) {
-    throw error
+    logAndThrow('Не удалось загрузить элементы дашборда из Supabase.', error)
   }
 
   return data ?? []
 }
 
 export const createItem = async (item, { userId } = {}) => {
-  if (!canUseRemoteStorage(userId)) {
+  const remoteUserId = await getRemoteUserId(userId)
+
+  if (!canUseRemoteStorage(remoteUserId)) {
     if (item.item_type === STORAGE_ITEM_TYPES.CATEGORY) {
       const categories = readLocalCategories()
       const nextCategories = [...categories, item.title]
@@ -184,19 +214,21 @@ export const createItem = async (item, { userId } = {}) => {
 
   const { data, error } = await supabase
     .from('dashboard_items')
-    .insert(mapRemoteItemPayload(item, userId))
+    .insert(mapRemoteItemPayload(item, remoteUserId))
     .select()
     .single()
 
   if (error) {
-    throw error
+    logAndThrow('Не удалось добавить элемент в Supabase.', error)
   }
 
   return data
 }
 
 export const updateItem = async (id, updates, { userId } = {}) => {
-  if (!canUseRemoteStorage(userId)) {
+  const remoteUserId = await getRemoteUserId(userId)
+
+  if (!canUseRemoteStorage(remoteUserId)) {
     return updateLocalItemState(id, updates)
   }
 
@@ -207,19 +239,21 @@ export const updateItem = async (id, updates, { userId } = {}) => {
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
-    .eq('user_id', userId)
+    .eq('user_id', remoteUserId)
     .select()
     .single()
 
   if (error) {
-    throw error
+    logAndThrow('Не удалось обновить элемент в Supabase.', error)
   }
 
   return data
 }
 
 export const deleteItem = async (id, { userId } = {}) => {
-  if (!canUseRemoteStorage(userId)) {
+  const remoteUserId = await getRemoteUserId(userId)
+
+  if (!canUseRemoteStorage(remoteUserId)) {
     const categoryId = String(id)
 
     if (categoryId.startsWith('category:')) {
@@ -238,15 +272,16 @@ export const deleteItem = async (id, { userId } = {}) => {
     .from('dashboard_items')
     .delete()
     .eq('id', id)
-    .eq('user_id', userId)
+    .eq('user_id', remoteUserId)
 
   if (error) {
-    throw error
+    logAndThrow('Не удалось удалить элемент из Supabase.', error)
   }
 }
 
 export const getDashboardData = async ({ userId } = {}) => {
-  const items = await getItems({ userId })
+  const remoteUserId = await getRemoteUserId(userId)
+  const items = await getItems({ userId: remoteUserId })
   const categories = items
     .filter((item) => item.item_type === STORAGE_ITEM_TYPES.CATEGORY)
     .map(mapRowToCategory)
@@ -256,6 +291,15 @@ export const getDashboardData = async ({ userId } = {}) => {
     .map(mapRowToSession)
     .sort((left, right) => new Date(right.date) - new Date(left.date))
 
+  const categoriesFromSessions = [...new Set(sessions.map((session) => session.category))]
+
+  if (canUseRemoteStorage(remoteUserId)) {
+    return {
+      categories: categories.length > 0 ? categories : categoriesFromSessions,
+      sessions,
+    }
+  }
+
   return {
     categories: categories.length > 0 ? categories : DEFAULT_CATEGORIES,
     sessions: sessions.length > 0 ? sessions : DEFAULT_SESSIONS,
@@ -263,19 +307,22 @@ export const getDashboardData = async ({ userId } = {}) => {
 }
 
 export const createCategory = async (categoryName, { userId } = {}) => {
+  const remoteUserId = await getRemoteUserId(userId)
   const created = await createItem({
     title: categoryName,
     description: null,
     value: null,
     item_type: STORAGE_ITEM_TYPES.CATEGORY,
     payload: { name: categoryName },
-  }, { userId })
+  }, { userId: remoteUserId })
 
-  return canUseRemoteStorage(userId) ? mapRowToCategory(created) : created.title
+  return canUseRemoteStorage(remoteUserId) ? mapRowToCategory(created) : created.title
 }
 
 export const deleteCategory = async (categoryName, { userId } = {}) => {
-  if (!canUseRemoteStorage(userId)) {
+  const remoteUserId = await getRemoteUserId(userId)
+
+  if (!canUseRemoteStorage(remoteUserId)) {
     await deleteItem(`category:${categoryName}`)
     return
   }
@@ -283,16 +330,17 @@ export const deleteCategory = async (categoryName, { userId } = {}) => {
   const { error } = await supabase
     .from('dashboard_items')
     .delete()
-    .eq('user_id', userId)
+    .eq('user_id', remoteUserId)
     .eq('item_type', STORAGE_ITEM_TYPES.CATEGORY)
     .eq('title', categoryName)
 
   if (error) {
-    throw error
+    logAndThrow('Не удалось удалить категорию из Supabase.', error)
   }
 }
 
 export const createSession = async (session, { userId } = {}) => {
+  const remoteUserId = await getRemoteUserId(userId)
   const created = await createItem({
     title: session.category,
     description: session.comment,
@@ -304,9 +352,9 @@ export const createSession = async (session, { userId } = {}) => {
       duration: session.duration,
       comment: session.comment,
     },
-  }, { userId })
+  }, { userId: remoteUserId })
 
-  return canUseRemoteStorage(userId) ? mapRowToSession(created) : created
+  return canUseRemoteStorage(remoteUserId) ? mapRowToSession(created) : created
 }
 
 export const deleteSession = async (sessionId, { userId } = {}) => {

@@ -75,6 +75,7 @@ export default function App() {
           setCurrentUser(user)
         }
       } catch (error) {
+        console.error('Ошибка получения текущего пользователя Supabase.', error)
         if (isMounted) {
           setErrorMessage(error.message || 'Не удалось определить текущего пользователя.')
         }
@@ -118,6 +119,7 @@ export default function App() {
         setCategories(dashboardData.categories)
         setSessions(dashboardData.sessions)
       } catch (error) {
+        console.error('Ошибка загрузки данных дашборда.', error)
         if (isMounted) {
           setErrorMessage(error.message || 'Не удалось загрузить данные дашборда.')
           setCategories(DEFAULT_CATEGORIES)
@@ -264,6 +266,7 @@ export default function App() {
         setCategory(createdCategory)
       }
     } catch (error) {
+      console.error('Ошибка добавления категории.', error)
       setErrorMessage(error.message || 'Не удалось добавить предмет.')
     } finally {
       setIsSaving(false)
@@ -285,6 +288,7 @@ export default function App() {
       await deleteCategory(categoryToDelete, { userId })
       setCategories((currentCategories) => currentCategories.filter((currentCategory) => currentCategory !== categoryToDelete))
     } catch (error) {
+      console.error('Ошибка удаления категории.', error)
       setErrorMessage(error.message || 'Не удалось удалить предмет.')
     } finally {
       setIsSaving(false)
@@ -314,6 +318,7 @@ export default function App() {
       setDuration('')
       setComment('')
     } catch (error) {
+      console.error('Ошибка добавления занятия.', error)
       setErrorMessage(error.message || 'Не удалось сохранить занятие.')
     } finally {
       setIsSaving(false)
@@ -328,6 +333,7 @@ export default function App() {
       await deleteSession(sessionId, { userId })
       setSessions((currentSessions) => currentSessions.filter((session) => String(session.id) !== String(sessionId)))
     } catch (error) {
+      console.error('Ошибка удаления занятия.', error)
       setErrorMessage(error.message || 'Не удалось удалить занятие.')
     } finally {
       setIsSaving(false)
@@ -350,6 +356,7 @@ export default function App() {
       setAuthMessage('Письмо со ссылкой для входа отправлено. После входа данные смогут синхронизироваться между устройствами.')
       setAuthEmail('')
     } catch (error) {
+      console.error('Ошибка отправки magic link.', error)
       setErrorMessage(error.message || 'Не удалось отправить magic link.')
     } finally {
       setIsSaving(false)
@@ -366,6 +373,7 @@ export default function App() {
       setCurrentUser(null)
       setAuthMessage('Вы вышли из Supabase-аккаунта. Приложение продолжает работать локально.')
     } catch (error) {
+      console.error('Ошибка выхода из Supabase.', error)
       setErrorMessage(error.message || 'Не удалось выйти из аккаунта.')
     } finally {
       setIsSaving(false)
