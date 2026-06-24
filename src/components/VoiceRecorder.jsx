@@ -31,8 +31,10 @@ export default function VoiceRecorder({
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => () => {
-    if (mediaRecorderRef.current?.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
+    const recorder = mediaRecorderRef.current
+
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop()
     }
 
     if (streamRef.current) {
@@ -115,6 +117,7 @@ export default function VoiceRecorder({
 
         chunksRef.current = []
         startedAtRef.current = null
+        mediaRecorderRef.current = null
         setIsRecording(false)
         stopStream()
       }
@@ -137,6 +140,8 @@ export default function VoiceRecorder({
   }
 
   const handleClearRecording = () => {
+    mediaRecorderRef.current = null
+
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current)
       previewUrlRef.current = ''
