@@ -77,7 +77,7 @@ export default function CalendarTasksModal({
               На этот день задач пока нет
             </div>
           ) : (
-            items.map((item) => (
+            items.filter(Boolean).map((item) => (
               <label
                 key={item.id}
                 className="flex gap-4 rounded-2xl border border-slate-700 bg-slate-900/60 p-4 transition hover:border-slate-600"

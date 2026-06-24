@@ -39,7 +39,6 @@ import { formatLocalDate, parseLocalDate } from './lib/dateUtils'
 import { isSupabaseConfigured } from './lib/supabaseClient'
 import { getCurrentUser, signInWithEmail, signOut, subscribeToAuthChanges } from './services/authService'
 import {
-  CALENDAR_ITEM_TYPES,
   completeCalendarItem,
   createTextTask,
   createVoiceNote,
@@ -63,12 +62,6 @@ const formatTimer = (totalSeconds) => {
 
   return `${hours}:${minutes}:${seconds}`
 }
-
-const sortItemsByCreatedAtDesc = (items) => (
-  [...items].sort(
-    (left, right) => new Date(right.created_at ?? 0).getTime() - new Date(left.created_at ?? 0).getTime(),
-  )
-)
 
 export default function App() {
   const [categories, setCategories] = useState([])
@@ -513,28 +506,25 @@ export default function App() {
     setCalendarErrorMessage('')
 
     try {
-      const createdItems = []
-
       if (text) {
-        const createdTextTask = await createTextTask(selectedCalendarDate, text, { userId })
-        createdItems.push(createdTextTask)
+        await createTextTask(selectedCalendarDate, text, { userId })
       }
 
       if (voiceNote?.blob) {
-        const createdVoiceNote = await createVoiceNote(selectedCalendarDate, voiceNote.blob, {
+        await createVoiceNote(selectedCalendarDate, voiceNote.blob, {
           userId,
           mimeType: voiceNote.mimeType,
           durationSeconds: voiceNote.durationSeconds,
         })
-        createdItems.push(createdVoiceNote)
       }
 
-      setCalendarItems((currentItems) => sortItemsByCreatedAtDesc([...createdItems, ...currentItems]))
+      const refreshedItems = await getCalendarItemsByDate(selectedCalendarDate, { userId })
+      setCalendarItems(refreshedItems)
       setIsAddCalendarTaskOpen(false)
 
-      if (createdItems.length === 2) {
+      if (text && voiceNote?.blob) {
         setStatusMessage('Текстовая задача и голосовая заметка сохранены.')
-      } else if (createdItems[0]?.item_type === CALENDAR_ITEM_TYPES.VOICE) {
+      } else if (voiceNote?.blob) {
         setStatusMessage('Голосовая заметка сохранена.')
       } else {
         setStatusMessage('Текстовая задача сохранена.')
