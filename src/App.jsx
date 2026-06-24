@@ -32,8 +32,19 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react'
+import AddCalendarTaskModal from './components/AddCalendarTaskModal'
+import CalendarModal from './components/CalendarModal'
+import CalendarTasksModal from './components/CalendarTasksModal'
+import { formatLocalDate, parseLocalDate } from './lib/dateUtils'
 import { isSupabaseConfigured } from './lib/supabaseClient'
 import { getCurrentUser, signInWithEmail, signOut, subscribeToAuthChanges } from './services/authService'
+import {
+  CALENDAR_ITEM_TYPES,
+  completeCalendarItem,
+  createTextTask,
+  createVoiceNote,
+  getCalendarItemsByDate,
+} from './services/calendarService'
 import {
   createCategory,
   createSession,
@@ -53,6 +64,12 @@ const formatTimer = (totalSeconds) => {
   return `${hours}:${minutes}:${seconds}`
 }
 
+const sortItemsByCreatedAtDesc = (items) => (
+  [...items].sort(
+    (left, right) => new Date(right.created_at ?? 0).getTime() - new Date(left.created_at ?? 0).getTime(),
+  )
+)
+
 export default function App() {
   const [categories, setCategories] = useState([])
   const [sessions, setSessions] = useState([])
@@ -62,7 +79,7 @@ export default function App() {
   const [timeRange, setTimeRange] = useState('week')
   const [currentUser, setCurrentUser] = useState(null)
   const [authEmail, setAuthEmail] = useState('')
-  const [authMessage, setAuthMessage] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -74,10 +91,19 @@ export default function App() {
   const [timerModalStep, setTimerModalStep] = useState('confirmFinish')
   const [timerSubject, setTimerSubject] = useState('')
   const [timerComment, setTimerComment] = useState('')
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false)
+  const [isCalendarTasksOpen, setIsCalendarTasksOpen] = useState(false)
+  const [isAddCalendarTaskOpen, setIsAddCalendarTaskOpen] = useState(false)
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(new Date())
+  const [calendarItems, setCalendarItems] = useState([])
+  const [calendarItemsLoading, setCalendarItemsLoading] = useState(false)
+  const [calendarErrorMessage, setCalendarErrorMessage] = useState('')
   const intervalRef = useRef(null)
 
   const userId = currentUser?.id ?? null
   const storageMode = isSupabaseConfigured && currentUser ? 'supabase' : 'local'
+  const resolvedTimerSubject = categories.includes(timerSubject) ? timerSubject : (categories[0] || '')
+  const activeSubject = selectedSubject && categories.includes(selectedSubject) ? selectedSubject : null
 
   useEffect(() => {
     let isMounted = true
@@ -156,16 +182,6 @@ export default function App() {
   }, [authLoading, userId])
 
   useEffect(() => {
-    if (timerSubject && !categories.includes(timerSubject)) {
-      setTimerSubject(categories[0] || '')
-    }
-
-    if (selectedSubject && !categories.includes(selectedSubject)) {
-      setSelectedSubject(null)
-    }
-  }, [categories, selectedSubject, timerSubject])
-
-  useEffect(() => {
     if (!isLearningActive || !startedAt) {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
@@ -191,13 +207,49 @@ export default function App() {
     }
   }, [isLearningActive, startedAt])
 
+  useEffect(() => {
+    if (!isCalendarTasksOpen) {
+      return undefined
+    }
+
+    let isMounted = true
+
+    const loadCalendarItems = async () => {
+      setCalendarItemsLoading(true)
+      setCalendarErrorMessage('')
+
+      try {
+        const items = await getCalendarItemsByDate(selectedCalendarDate, { userId })
+        if (isMounted) {
+          setCalendarItems(items)
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки задач календаря.', error)
+        if (isMounted) {
+          setCalendarItems([])
+          setCalendarErrorMessage(error.message || 'Не удалось загрузить задачи на выбранную дату.')
+        }
+      } finally {
+        if (isMounted) {
+          setCalendarItemsLoading(false)
+        }
+      }
+    }
+
+    loadCalendarItems()
+
+    return () => {
+      isMounted = false
+    }
+  }, [isCalendarTasksOpen, selectedCalendarDate, userId])
+
   const totalHours = useMemo(
     () => (sessions.reduce((accumulator, session) => accumulator + session.duration, 0) / 60).toFixed(1),
     [sessions],
   )
 
   const todayMinutes = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0]
+    const today = formatLocalDate(new Date())
     return sessions
       .filter((session) => session.date === today)
       .reduce((accumulator, session) => accumulator + session.duration, 0)
@@ -221,7 +273,7 @@ export default function App() {
     const result = days.map((day) => ({ name: day, Минуты: 0 }))
 
     sessions.forEach((session) => {
-      const dayIndex = new Date(session.date).getDay()
+      const dayIndex = parseLocalDate(session.date).getDay()
       result[dayIndex].Минуты += session.duration
     })
 
@@ -231,21 +283,21 @@ export default function App() {
     return result
   }, [sessions])
 
-  const getFilteredSessions = () => {
+  const filteredSessions = useMemo(() => {
     const now = new Date()
     const msPerDay = 24 * 60 * 60 * 1000
     const days = timeRange === 'week' ? 7 : timeRange === 'month' ? 30 : 365
-    const cutoff = new Date(now.getTime() - days * msPerDay).toISOString().split('T')[0]
+    const cutoff = formatLocalDate(new Date(now.getTime() - days * msPerDay))
 
     return sessions.filter((session) => session.date >= cutoff)
-  }
+  }, [sessions, timeRange])
 
   const subjectStats = useMemo(() => {
-    if (!selectedSubject) {
+    if (!activeSubject) {
       return null
     }
 
-    const filtered = getFilteredSessions().filter((session) => session.category === selectedSubject)
+    const filtered = filteredSessions.filter((session) => session.category === activeSubject)
     const chartDataMap = {}
 
     filtered.forEach((session) => {
@@ -268,22 +320,28 @@ export default function App() {
       min: durations.length ? Math.min(...durations) : 0,
       total: filtered.length,
     }
-  }, [selectedSubject, timeRange, sessions])
+  }, [activeSubject, filteredSessions])
 
   const contributionData = useMemo(() => {
-    const filtered = getFilteredSessions()
     const totals = {}
 
-    filtered.forEach((session) => {
+    filteredSessions.forEach((session) => {
       totals[session.category] = (totals[session.category] || 0) + session.duration
     })
 
     return Object.keys(totals).map((categoryName) => ({ name: categoryName, value: totals[categoryName] }))
-  }, [timeRange, sessions])
+  }, [filteredSessions])
 
   const getColor = (categoryName) => {
     const index = categories.indexOf(categoryName)
     return index !== -1 ? COLORS[index % COLORS.length] : COLORS[COLORS.length - 1]
+  }
+
+  const closeCalendarFlow = () => {
+    setIsCalendarOpen(false)
+    setIsCalendarTasksOpen(false)
+    setIsAddCalendarTaskOpen(false)
+    setCalendarErrorMessage('')
   }
 
   const resetTimerState = () => {
@@ -308,7 +366,7 @@ export default function App() {
     setTimerSubject(availableCategory)
     setTimerComment('')
     setTimerModalStep('confirmFinish')
-    setAuthMessage('Сессия обучения запущена. Таймер считает время автоматически.')
+    setStatusMessage('Сессия обучения запущена. Таймер считает время автоматически.')
     setErrorMessage('')
   }
 
@@ -319,6 +377,25 @@ export default function App() {
 
     setTimerModalStep('confirmFinish')
     setIsTimerModalOpen(true)
+  }
+
+  const handleOpenCalendar = () => {
+    setCalendarErrorMessage('')
+    setIsCalendarOpen(true)
+  }
+
+  const handleSelectCalendarDate = (date) => {
+    setSelectedCalendarDate(date)
+    setIsCalendarOpen(false)
+    setIsCalendarTasksOpen(true)
+    setIsAddCalendarTaskOpen(false)
+    setCalendarErrorMessage('')
+  }
+
+  const handleBackToCalendar = () => {
+    setIsAddCalendarTaskOpen(false)
+    setIsCalendarTasksOpen(false)
+    setIsCalendarOpen(true)
   }
 
   const handleAddCategory = async (event) => {
@@ -387,7 +464,9 @@ export default function App() {
 
   const handleConfirmFinish = () => {
     setTimerModalStep('saveSession')
-    setTimerSubject((currentValue) => currentValue || categories[0] || '')
+    if (!resolvedTimerSubject) {
+      setTimerSubject(categories[0] || '')
+    }
   }
 
   const handleSaveTimedSession = async () => {
@@ -398,30 +477,92 @@ export default function App() {
       return
     }
 
-    if (!timerSubject) {
+    if (!resolvedTimerSubject) {
       setErrorMessage('Выбери предмет перед сохранением.')
       return
     }
 
     const nextSession = {
-      date: new Date().toISOString().split('T')[0],
-      category: timerSubject,
+      date: formatLocalDate(new Date()),
+      category: resolvedTimerSubject,
       duration: durationMinutes,
       comment: timerComment.trim() || 'Без описания',
     }
 
     setIsSaving(true)
     setErrorMessage('')
-    setAuthMessage('')
+    setStatusMessage('')
 
     try {
       const createdSession = await createSession(nextSession, { userId })
       setSessions((currentSessions) => [createdSession, ...currentSessions])
       resetTimerState()
-      setAuthMessage(`Сессия сохранена: ${durationMinutes} мин. по предмету "${nextSession.category}".`)
+      setStatusMessage(`Сессия сохранена: ${durationMinutes} мин. по предмету "${nextSession.category}".`)
     } catch (error) {
       console.error('Ошибка сохранения сессии таймера.', error)
-      setErrorMessage(error.message || 'Не удалось сохранить завершённую сессию.')
+      setErrorMessage(error.message || 'Не удалось сохранить завершенную сессию.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCreateCalendarEntries = async ({ text, voiceNote }) => {
+    setIsSaving(true)
+    setErrorMessage('')
+    setStatusMessage('')
+    setCalendarErrorMessage('')
+
+    try {
+      const createdItems = []
+
+      if (text) {
+        const createdTextTask = await createTextTask(selectedCalendarDate, text, { userId })
+        createdItems.push(createdTextTask)
+      }
+
+      if (voiceNote?.blob) {
+        const createdVoiceNote = await createVoiceNote(selectedCalendarDate, voiceNote.blob, {
+          userId,
+          mimeType: voiceNote.mimeType,
+          durationSeconds: voiceNote.durationSeconds,
+        })
+        createdItems.push(createdVoiceNote)
+      }
+
+      setCalendarItems((currentItems) => sortItemsByCreatedAtDesc([...createdItems, ...currentItems]))
+      setIsAddCalendarTaskOpen(false)
+
+      if (createdItems.length === 2) {
+        setStatusMessage('Текстовая задача и голосовая заметка сохранены.')
+      } else if (createdItems[0]?.item_type === CALENDAR_ITEM_TYPES.VOICE) {
+        setStatusMessage('Голосовая заметка сохранена.')
+      } else {
+        setStatusMessage('Текстовая задача сохранена.')
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения календарной задачи.', error)
+      setCalendarErrorMessage(error.message || 'Не удалось сохранить задачу на выбранную дату.')
+      setErrorMessage(error.message || 'Не удалось сохранить задачу на выбранную дату.')
+      throw error
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCompleteCalendarEntry = async (itemId) => {
+    setIsSaving(true)
+    setErrorMessage('')
+    setStatusMessage('')
+    setCalendarErrorMessage('')
+
+    try {
+      await completeCalendarItem(itemId, { userId })
+      setCalendarItems((currentItems) => currentItems.filter((item) => String(item.id) !== String(itemId)))
+      setStatusMessage('Элемент отмечен выполненным и скрыт из активного списка.')
+    } catch (error) {
+      console.error('Ошибка завершения календарной задачи.', error)
+      setCalendarErrorMessage(error.message || 'Не удалось отметить элемент выполненным.')
+      setErrorMessage(error.message || 'Не удалось отметить элемент выполненным.')
     } finally {
       setIsSaving(false)
     }
@@ -436,11 +577,11 @@ export default function App() {
 
     setIsSaving(true)
     setErrorMessage('')
-    setAuthMessage('')
+    setStatusMessage('')
 
     try {
       await signInWithEmail(authEmail.trim())
-      setAuthMessage('Письмо со ссылкой для входа отправлено. После входа данные смогут синхронизироваться между устройствами.')
+      setStatusMessage('Письмо со ссылкой для входа отправлено. После входа данные смогут синхронизироваться между устройствами.')
       setAuthEmail('')
     } catch (error) {
       console.error('Ошибка отправки magic link.', error)
@@ -453,12 +594,12 @@ export default function App() {
   const handleSignOut = async () => {
     setIsSaving(true)
     setErrorMessage('')
-    setAuthMessage('')
+    setStatusMessage('')
 
     try {
       await signOut()
       setCurrentUser(null)
-      setAuthMessage('Вы вышли из Supabase-аккаунта. Приложение продолжает работать локально.')
+      setStatusMessage('Вы вышли из Supabase-аккаунта. Приложение продолжает работать локально.')
     } catch (error) {
       console.error('Ошибка выхода из Supabase.', error)
       setErrorMessage(error.message || 'Не удалось выйти из аккаунта.')
@@ -494,10 +635,21 @@ export default function App() {
 
           <div className="flex flex-wrap gap-3 xl:justify-end">
             <button
+              type="button"
+              onClick={handleOpenCalendar}
+              className="flex items-center gap-2 bg-slate-900/70 text-slate-200 border border-slate-700 px-4 py-2 rounded-xl hover:bg-slate-700/70 transition"
+            >
+              <Calendar size={18} className="text-indigo-300" />
+              Календарь
+            </button>
+
+            <button
+              type="button"
               onClick={() => setIsContributionOpen(true)}
               className="flex items-center gap-2 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-4 py-2 rounded-xl hover:bg-indigo-600/30 transition"
             >
-              <PieIcon size={18} /> Вклад занятий
+              <PieIcon size={18} />
+              Вклад занятий
             </button>
 
             {isLearningActive && (
@@ -559,7 +711,8 @@ export default function App() {
                     disabled={isSaving}
                     className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 transition"
                   >
-                    <LogOut size={16} /> Выйти
+                    <LogOut size={16} />
+                    Выйти
                   </button>
                 </div>
               ) : (
@@ -576,7 +729,8 @@ export default function App() {
                     disabled={isSaving}
                     className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-700 transition"
                   >
-                    <Mail size={16} /> Войти по ссылке
+                    <Mail size={16} />
+                    Войти по ссылке
                   </button>
                 </form>
               )
@@ -588,10 +742,10 @@ export default function App() {
           </div>
         </div>
 
-        {(errorMessage || authMessage) && (
+        {(errorMessage || statusMessage) && (
           <div className={`rounded-2xl border px-4 py-3 text-sm flex items-start gap-3 ${errorMessage ? 'border-rose-500/30 bg-rose-500/10 text-rose-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
             {errorMessage ? <AlertCircle size={18} className="shrink-0 mt-0.5" /> : <CheckCircle size={18} className="shrink-0 mt-0.5" />}
-            <span>{errorMessage || authMessage}</span>
+            <span>{errorMessage || statusMessage}</span>
           </div>
         )}
       </header>
@@ -618,6 +772,7 @@ export default function App() {
                     <span className="font-medium text-slate-200 group-hover:text-white transition truncate">{categoryName}</span>
                   </button>
                   <button
+                    type="button"
                     onClick={(event) => handleDeleteCategory(categoryName, event)}
                     className="absolute right-2 opacity-0 group-hover:opacity-100 p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                     title="Удалить предмет"
@@ -650,16 +805,31 @@ export default function App() {
           <div className="flex-1 w-full space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
               <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 flex items-center gap-4">
-                <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400"><Clock size={24} /></div>
-                <div><div className="text-xs text-slate-400 font-medium uppercase">Всего времени</div><div className="text-xl font-bold">{totalHours} ч.</div></div>
+                <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400">
+                  <Clock size={24} />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-medium uppercase">Всего времени</div>
+                  <div className="text-xl font-bold">{totalHours} ч.</div>
+                </div>
               </div>
               <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 flex items-center gap-4">
-                <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400"><CheckCircle size={24} /></div>
-                <div><div className="text-xs text-slate-400 font-medium uppercase">За сегодня</div><div className="text-xl font-bold">{todayMinutes} мин.</div></div>
+                <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400">
+                  <CheckCircle size={24} />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-medium uppercase">За сегодня</div>
+                  <div className="text-xl font-bold">{todayMinutes} мин.</div>
+                </div>
               </div>
               <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 flex items-center gap-4">
-                <div className="p-3 bg-amber-500/10 rounded-xl text-amber-400"><BookOpen size={24} /></div>
-                <div className="overflow-hidden"><div className="text-xs text-slate-400 font-medium uppercase">Фокус недели</div><div className="text-xl font-bold truncate">{favoriteCategory}</div></div>
+                <div className="p-3 bg-amber-500/10 rounded-xl text-amber-400">
+                  <BookOpen size={24} />
+                </div>
+                <div className="overflow-hidden">
+                  <div className="text-xs text-slate-400 font-medium uppercase">Фокус недели</div>
+                  <div className="text-xl font-bold truncate">{favoriteCategory}</div>
+                </div>
               </div>
             </div>
 
@@ -706,7 +876,12 @@ export default function App() {
                         <td className="py-2 px-3">{session.duration} мин</td>
                         <td className="py-2 px-3 text-slate-300 truncate max-w-xs">{session.comment}</td>
                         <td className="py-2 px-3 text-right">
-                          <button onClick={() => handleDeleteSession(session.id)} className="text-slate-500 hover:text-rose-400" disabled={isSaving}>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSession(session.id)}
+                            className="text-slate-500 hover:text-rose-400"
+                            disabled={isSaving}
+                          >
                             <Trash2 size={14} />
                           </button>
                         </td>
@@ -720,16 +895,30 @@ export default function App() {
         </div>
       )}
 
-      {selectedSubject && (
+      {activeSubject && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-2xl shadow-2xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold flex items-center gap-2"><TrendingUp className="text-indigo-400" /> {selectedSubject}</h2>
-              <button onClick={() => setSelectedSubject(null)} className="text-slate-400 hover:text-white bg-slate-700/50 p-1.5 rounded-lg"><X size={20} /></button>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <TrendingUp className="text-indigo-400" />
+                {activeSubject}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSelectedSubject(null)}
+                className="text-slate-400 hover:text-white bg-slate-700/50 p-1.5 rounded-lg"
+              >
+                <X size={20} />
+              </button>
             </div>
             <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl w-max">
               {['week', 'month', 'year'].map((range) => (
-                <button key={range} onClick={() => setTimeRange(range)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${timeRange === range ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>
+                <button
+                  key={range}
+                  type="button"
+                  onClick={() => setTimeRange(range)}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${timeRange === range ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                >
                   {range === 'week' ? 'Неделя' : range === 'month' ? 'Месяц' : 'Год'}
                 </button>
               ))}
@@ -737,9 +926,18 @@ export default function App() {
             {subjectStats?.total > 0 ? (
               <>
                 <div className="grid grid-cols-3 gap-4 mb-6">
-                  <div className="bg-slate-900/50 border border-slate-700 p-3 rounded-xl text-center"><div className="text-xs text-slate-400">Среднее</div><div className="text-lg font-bold text-indigo-400">{subjectStats.avg} мин</div></div>
-                  <div className="bg-slate-900/50 border border-slate-700 p-3 rounded-xl text-center"><div className="text-xs text-slate-400">Максимум</div><div className="text-lg font-bold text-emerald-400">{subjectStats.max} мин</div></div>
-                  <div className="bg-slate-900/50 border border-slate-700 p-3 rounded-xl text-center"><div className="text-xs text-slate-400">Минимум</div><div className="text-lg font-bold text-rose-400">{subjectStats.min} мин</div></div>
+                  <div className="bg-slate-900/50 border border-slate-700 p-3 rounded-xl text-center">
+                    <div className="text-xs text-slate-400">Среднее</div>
+                    <div className="text-lg font-bold text-indigo-400">{subjectStats.avg} мин</div>
+                  </div>
+                  <div className="bg-slate-900/50 border border-slate-700 p-3 rounded-xl text-center">
+                    <div className="text-xs text-slate-400">Максимум</div>
+                    <div className="text-lg font-bold text-emerald-400">{subjectStats.max} мин</div>
+                  </div>
+                  <div className="bg-slate-900/50 border border-slate-700 p-3 rounded-xl text-center">
+                    <div className="text-xs text-slate-400">Минимум</div>
+                    <div className="text-lg font-bold text-rose-400">{subjectStats.min} мин</div>
+                  </div>
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -753,7 +951,11 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
               </>
-            ) : <div className="py-12 text-center text-slate-500">За выбранный период нет записей по этому предмету.</div>}
+            ) : (
+              <div className="py-12 text-center text-slate-500">
+                За выбранный период нет записей по этому предмету.
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -762,12 +964,26 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold flex items-center gap-2"><PieIcon className="text-emerald-400" /> Вклад предметов</h2>
-              <button onClick={() => setIsContributionOpen(false)} className="text-slate-400 hover:text-white bg-slate-700/50 p-1.5 rounded-lg"><X size={20} /></button>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <PieIcon className="text-emerald-400" />
+                Вклад предметов
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsContributionOpen(false)}
+                className="text-slate-400 hover:text-white bg-slate-700/50 p-1.5 rounded-lg"
+              >
+                <X size={20} />
+              </button>
             </div>
             <div className="flex gap-2 mb-6 bg-slate-900 p-1 rounded-xl w-max mx-auto">
               {['week', 'month', 'year'].map((range) => (
-                <button key={range} onClick={() => setTimeRange(range)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${timeRange === range ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>
+                <button
+                  key={range}
+                  type="button"
+                  onClick={() => setTimeRange(range)}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${timeRange === range ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                >
                   {range === 'week' ? 'Неделя' : range === 'month' ? 'Месяц' : 'Год'}
                 </button>
               ))}
@@ -777,13 +993,19 @@ export default function App() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={contributionData} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={4} dataKey="value">
-                      {contributionData.map((entry, index) => <Cell key={`cell-${index}`} fill={getColor(entry.name)} />)}
+                      {contributionData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={getColor(entry.name)} />
+                      ))}
                     </Pie>
                     <Tooltip formatter={(value) => `${value} мин.`} contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', borderRadius: '12px', color: '#f8fafc' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-            ) : <div className="py-12 text-center text-slate-500">Нет данных для построения диаграммы.</div>}
+            ) : (
+              <div className="py-12 text-center text-slate-500">
+                Нет данных для построения диаграммы.
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -797,6 +1019,7 @@ export default function App() {
                 {timerModalStep === 'confirmFinish' ? 'Активная сессия' : 'Сохранение сессии'}
               </h2>
               <button
+                type="button"
                 onClick={() => setIsTimerModalOpen(false)}
                 className="text-slate-400 hover:text-white bg-slate-700/50 p-1.5 rounded-lg"
               >
@@ -838,13 +1061,15 @@ export default function App() {
                 </div>
 
                 <select
-                  value={timerSubject}
+                  value={resolvedTimerSubject}
                   onChange={(event) => setTimerSubject(event.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 outline-none"
                   disabled={categories.length === 0 || isSaving}
                 >
                   {categories.length === 0 && <option value="">Создайте предмет слева</option>}
-                  {categories.map((categoryName) => <option key={categoryName} value={categoryName}>{categoryName}</option>)}
+                  {categories.map((categoryName) => (
+                    <option key={categoryName} value={categoryName}>{categoryName}</option>
+                  ))}
                 </select>
 
                 <textarea
@@ -876,6 +1101,35 @@ export default function App() {
             )}
           </div>
         </div>
+      )}
+
+      <CalendarModal
+        isOpen={isCalendarOpen}
+        onClose={closeCalendarFlow}
+        selectedDate={selectedCalendarDate}
+        onSelectDate={handleSelectCalendarDate}
+      />
+
+      <CalendarTasksModal
+        isOpen={isCalendarTasksOpen}
+        selectedDate={selectedCalendarDate}
+        items={calendarItems}
+        isLoading={calendarItemsLoading}
+        errorMessage={calendarErrorMessage}
+        isSaving={isSaving}
+        onClose={closeCalendarFlow}
+        onBack={handleBackToCalendar}
+        onAddTask={() => setIsAddCalendarTaskOpen(true)}
+        onCompleteItem={handleCompleteCalendarEntry}
+      />
+
+      {isAddCalendarTaskOpen && (
+        <AddCalendarTaskModal
+          selectedDate={selectedCalendarDate}
+          isSaving={isSaving}
+          onClose={() => setIsAddCalendarTaskOpen(false)}
+          onSave={handleCreateCalendarEntries}
+        />
       )}
     </div>
   )

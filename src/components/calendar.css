@@ -1,0 +1,92 @@
+@import "react-day-picker/style.css";
+
+.calendar-shell .rdp-root {
+  --rdp-accent-color: #818cf8;
+  --rdp-accent-background-color: rgba(99, 102, 241, 0.18);
+  --rdp-day-width: 46px;
+  --rdp-day-height: 46px;
+  --rdp-day_button-width: 42px;
+  --rdp-day_button-height: 42px;
+  --rdp-day_button-border-radius: 14px;
+  --rdp-day_button-border: 1px solid transparent;
+  --rdp-selected-border: 1px solid rgba(165, 180, 252, 0.9);
+  --rdp-today-color: #34d399;
+  --rdp-nav-height: 2.5rem;
+  --rdp-nav_button-width: 2.25rem;
+  --rdp-nav_button-height: 2.25rem;
+  color: #e2e8f0;
+}
+
+.calendar-shell .rdp-months {
+  justify-content: center;
+}
+
+.calendar-shell .rdp-month_caption {
+  align-items: center;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.calendar-shell .rdp-button_previous,
+.calendar-shell .rdp-button_next {
+  border-radius: 0.875rem;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  color: #cbd5e1;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.calendar-shell .rdp-button_previous:hover,
+.calendar-shell .rdp-button_next:hover {
+  background: rgba(30, 41, 59, 1);
+  border-color: rgba(129, 140, 248, 0.55);
+  color: #ffffff;
+}
+
+.calendar-shell .rdp-chevron {
+  fill: currentColor;
+}
+
+.calendar-shell .rdp-weekday {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.calendar-shell .rdp-day {
+  color: #cbd5e1;
+}
+
+.calendar-shell .rdp-day_button {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.calendar-shell .rdp-day_button:hover:not([disabled]) {
+  background: rgba(51, 65, 85, 0.9);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.calendar-shell .rdp-selected .rdp-day_button {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 1), rgba(99, 102, 241, 0.92));
+  color: #ffffff;
+  border-color: rgba(165, 180, 252, 0.95);
+  box-shadow: 0 10px 25px rgba(79, 70, 229, 0.28);
+}
+
+.calendar-shell .rdp-today:not(.rdp-selected) .rdp-day_button {
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #a7f3d0;
+}
+
+.calendar-shell .rdp-outside {
+  color: #64748b;
+  opacity: 0.45;
+}
+
+.calendar-shell .rdp-disabled {
+  opacity: 0.35;
+}

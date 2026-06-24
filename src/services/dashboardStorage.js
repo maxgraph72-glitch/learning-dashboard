@@ -1,3 +1,4 @@
+import { formatLocalDate } from '../lib/dateUtils'
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient'
 
 const CATEGORIES_KEY = 'learning_categories'
@@ -12,7 +13,7 @@ export const STORAGE_ITEM_TYPES = {
 const getRecentDate = (daysAgo) => {
   const currentDate = new Date()
   currentDate.setDate(currentDate.getDate() - daysAgo)
-  return currentDate.toISOString().split('T')[0]
+  return formatLocalDate(currentDate)
 }
 
 export const DEFAULT_SESSIONS = [
